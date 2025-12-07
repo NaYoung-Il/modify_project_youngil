@@ -2,7 +2,37 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import client from '@/api/client';
 import { useAuthStore } from '@/store/authStore';
-import { Eye, EyeOff, Check } from 'lucide-react';
+import { Eye, EyeOff, Check, Search } from 'lucide-react';
+
+// react-daum-postcode : 주소 검색 라이브러리
+// Python 라이브러리가 아님. JavaScript/React 전용 라이브러리임. -> requirements.txt에 추가하지 말 것!
+// npm install react-daum-postcode -> package.json에 자동 추가
+// Docker 빌드하면 자동으로 설치됨. 
+import DaumPostcodeEmbed from 'react-daum-postcode';
+
+// 🖼️ 주소 검색 모달 스타일 (간단한 구현)
+const modalStyle = {
+  position: 'fixed' as 'fixed',
+  top: '50%',
+  left: '50%',
+  transform: 'translate(-50%, -50%)',
+  zIndex: 1000,
+  border: '1px solid #ccc',
+  background: '#fff',
+  width: '400px',
+  height: '500px',
+  boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+};
+
+const overlayStyle = {
+  position: 'fixed' as 'fixed',
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  backgroundColor: 'rgba(0,0,0,0.5)',
+  zIndex: 999
+};
 
 export default function Login() {
   const navigate = useNavigate();
@@ -12,17 +42,96 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  // 폼 데이터 확장
   const [formData, setFormData] = useState({
     email: '',
     password: '',
     fullName: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    birthDate: '',      // YYYY-MM-DD
+    phoneNumber: '',    // 01012345678
+    phoneCode: '',      // 인증번호 입력값
+    zipCode: '',        // 우편번호
+    address: '',        // 기본주소
+    detailAddress: ''   // 상세주소
   });
+
+  // 🔐 전화번호 인증 상태
+  const [isPhoneSent, setIsPhoneSent] = useState(false);     // 인증번호 발송 여부
+  const [isPhoneVerified, setIsPhoneVerified] = useState(false); // 인증 완료 여부
+
+  // 🏠 주소 검색 모달 상태
+  const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  // 📮 주소 검색 완료 핸들러
+  const handleAddressComplete = (data: any) => {
+    let fullAddress = data.address;
+    let extraAddress = '';
+
+    if (data.addressType === 'R') {
+      if (data.bname !== '') extraAddress += data.bname;
+      if (data.buildingName !== '') extraAddress += (extraAddress !== '' ? `, ${data.buildingName}` : data.buildingName);
+      fullAddress += (extraAddress !== '' ? ` (${extraAddress})` : '');
+    }
+
+    setFormData(prev => ({
+      ...prev,
+      zipCode: data.zonecode,
+      address: fullAddress
+    }));
+    setIsAddressModalOpen(false);
+  };
+
+  // 📱 전화번호 인증 요청 (API 연동)
+  const handleSendPhoneAuth = async () => {
+    if (!formData.phoneNumber) {
+      alert("전화번호를 입력해주세요.");
+      return;
+    }
+    try {
+      // POST /auth/send-code 요청
+      await client.post('/auth/send-code', { 
+        phone_number: formData.phoneNumber 
+      });
+      
+      setIsPhoneSent(true);
+      alert("인증번호가 발송되었습니다.\n(서버 콘솔을 확인하세요!)");
+      
+    } catch (err: any) {
+      console.error(err);
+      const msg = err.response?.data?.detail || "발송 실패";
+      alert(msg);
+    }
+  };
+
+  // 📱 전화번호 인증 확인 (API 연동)
+  const handleVerifyPhoneCode = async () => {
+    if (!formData.phoneCode) {
+      alert("인증번호를 입력해주세요.");
+      return;
+    }
+
+    try {
+      // POST /auth/verify-code 요청
+      await client.post('/auth/verify-code', { 
+        phone_number: formData.phoneNumber,
+        code: formData.phoneCode
+      });
+      
+      setIsPhoneVerified(true);
+      alert("✅ 인증이 완료되었습니다.");
+      
+    } catch (err: any) {
+      console.error(err);
+      const msg = err.response?.data?.detail || "인증 실패";
+      alert(msg);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -65,11 +174,22 @@ export default function Login() {
           return;
         }
 
+        if (!isPhoneVerified) {
+          setError("전화번호 인증을 완료해주세요.");
+          setIsLoading(false);
+          return;
+        }
+
         // 🚨 FIX: '/auth/signup'으로 요청
         await client.post('/auth/signup', {
           email: formData.email,
           password: formData.password,
-          full_name: formData.fullName || undefined, 
+          full_name: formData.fullName || undefined,
+          phone_number: formData.phoneNumber,
+          birth_date: formData.birthDate || null,
+          zip_code: formData.zipCode,
+          address: formData.address,
+          detail_address: formData.detailAddress
         });
 
         alert("회원가입이 완료되었습니다! 로그인해주세요.");
@@ -98,6 +218,16 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4 transition-colors duration-300">
       
+      {/* 주소 검색 모달 */}
+      {isAddressModalOpen && (
+        <>
+          <div style={overlayStyle} onClick={() => setIsAddressModalOpen(false)} />
+          <div style={modalStyle}>
+            <DaumPostcodeEmbed onComplete={handleAddressComplete} style={{ height: '100%' }} />
+          </div>
+        </>
+      )}
+
       {/* 배경 장식 요소 */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-[20%] -left-[10%] w-[600px] h-[600px] bg-purple-200/30 rounded-full blur-[120px]" />
@@ -114,22 +244,6 @@ export default function Login() {
         <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl border border-white/20 rounded-3xl shadow-xl p-8">
           
           <form onSubmit={handleSubmit} className="space-y-5">
-            
-            {/* 이름 (회원가입 시) */}
-            {!isLoginMode && (
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-gray-500 ml-1">이름</label>
-                <input
-                  name="fullName"
-                  type="text"
-                  placeholder="홍길동"
-                  value={formData.fullName}
-                  onChange={handleChange}
-                  required
-                  className="w-full h-12 px-4 bg-gray-100 dark:bg-gray-700/50 border-none rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-gray-900 dark:text-white transition-all"
-                />
-              </div>
-            )}
 
             {/* 아이디 */}
             <div className="space-y-1">
@@ -168,20 +282,136 @@ export default function Login() {
               </div>
             </div>
 
-            {/* 비밀번호 확인 (회원가입 시) */}
+            {/* 회원가입 전용 필드 */}
             {!isLoginMode && (
-              <div className="space-y-1 animate-fade-in-down">
-                <label className="text-xs font-semibold text-gray-500 ml-1">비밀번호 확인</label>
-                <input
-                  name="confirmPassword"
-                  type="password"
-                  placeholder="비밀번호를 한번 더 입력해주세요"
-                  value={formData.confirmPassword}
-                  onChange={handleChange}
-                  required
-                  className="w-full h-12 px-4 bg-gray-100 dark:bg-gray-700/50 border-none rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-gray-900 dark:text-white transition-all"
-                />
-              </div>
+              <>
+                {/* 비밀번호 확인 */}
+                <div className="space-y-1 animate-fade-in-down">
+                  <label className="text-xs font-semibold text-gray-500 ml-1">비밀번호 확인</label>
+                  <input
+                    name="confirmPassword"
+                    type="password"
+                    placeholder="비밀번호를 한번 더 입력해주세요"
+                    value={formData.confirmPassword}
+                    onChange={handleChange}
+                    required
+                    className="w-full h-12 px-4 bg-gray-100 dark:bg-gray-700/50 border-none rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-gray-900 dark:text-white transition-all"
+                  />
+                </div>
+
+                {/* 이름 */}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-gray-500 ml-1">이름</label>
+                  <input
+                    name="fullName"
+                    type="text"
+                    placeholder="홍길동"
+                    value={formData.fullName}
+                    onChange={handleChange}
+                    required
+                    className="w-full h-12 px-4 bg-gray-100 dark:bg-gray-700/50 border-none rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-gray-900 dark:text-white transition-all"
+                  />
+                </div>
+
+                {/* 생년월일 */}
+                <div className="space-y-1 animate-fade-in-down">
+                  <label className="text-xs font-semibold text-gray-500 ml-1">생년월일</label>
+                  <input
+                    name="birthDate"
+                    type="date"
+                    value={formData.birthDate}
+                    onChange={handleChange}
+                    required
+                    className="w-full h-12 px-4 bg-gray-100 dark:bg-gray-700/50 border-none rounded-xl focus:ring-2 focus:ring-purple-500 outline-none dark:text-white"
+                  />
+                </div>
+
+                {/* 전화번호 인증 */}
+                <div className="space-y-1 animate-fade-in-down">
+                  <label className="text-xs font-semibold text-gray-500 ml-1">전화번호</label>
+                  <div className="flex gap-2">
+                    <input
+                      name="phoneNumber"
+                      type="text"
+                      placeholder="01012345678"
+                      value={formData.phoneNumber}
+                      onChange={handleChange}
+                      disabled={isPhoneVerified}
+                      className="flex-1 h-12 px-4 bg-gray-100 dark:bg-gray-700/50 border-none rounded-xl focus:ring-2 focus:ring-purple-500 outline-none dark:text-white disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSendPhoneAuth}
+                      disabled={isPhoneVerified}
+                      className="px-4 h-12 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-white rounded-xl text-sm font-bold whitespace-nowrap hover:bg-gray-300 transition-colors disabled:opacity-50"
+                    >
+                      {isPhoneSent ? '재전송' : '인증요청'}
+                    </button>
+                  </div>
+                </div>
+
+                {isPhoneSent && !isPhoneVerified && (
+                  <div className="flex gap-2 animate-fade-in-down">
+                    <input
+                      name="phoneCode"
+                      type="text"
+                      placeholder="인증번호 6자리"
+                      value={formData.phoneCode}
+                      onChange={handleChange}
+                      className="flex-1 h-12 px-4 bg-gray-100 dark:bg-gray-700/50 border-none rounded-xl focus:ring-2 focus:ring-purple-500 outline-none dark:text-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleVerifyPhoneCode}
+                      className="px-4 h-12 bg-purple-100 text-purple-700 rounded-xl text-sm font-bold whitespace-nowrap hover:bg-purple-200 transition-colors"
+                    >
+                      확인
+                    </button>
+                  </div>
+                )}
+
+                {isPhoneVerified && (
+                  <p className="text-xs text-green-500 font-bold ml-1">✅ 인증이 완료되었습니다.</p>
+                )}
+
+                {/* 주소 입력 */}
+                <div className="space-y-1 animate-fade-in-down pt-2">
+                  <label className="text-xs font-semibold text-gray-500 ml-1">주소</label>
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      name="zipCode"
+                      type="text"
+                      placeholder="우편번호"
+                      value={formData.zipCode}
+                      readOnly
+                      className="w-24 h-12 px-4 bg-gray-100 dark:bg-gray-700/50 border-none rounded-xl text-gray-500 outline-none cursor-default"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setIsAddressModalOpen(true)}
+                      className="flex-1 h-12 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 hover:bg-gray-300 transition-colors"
+                    >
+                      <Search size={16} /> 주소 검색
+                    </button>
+                  </div>
+                  <input
+                    name="address"
+                    type="text"
+                    placeholder="기본 주소"
+                    value={formData.address}
+                    readOnly
+                    className="w-full h-12 px-4 bg-gray-100 dark:bg-gray-700/50 border-none rounded-xl mb-2 text-gray-500 outline-none"
+                  />
+                  <input
+                    name="detailAddress"
+                    type="text"
+                    placeholder="상세 주소 입력 (예: 101동 101호)"
+                    value={formData.detailAddress}
+                    onChange={handleChange}
+                    className="w-full h-12 px-4 bg-gray-100 dark:bg-gray-700/50 border-none rounded-xl focus:ring-2 focus:ring-purple-500 outline-none dark:text-white"
+                  />
+                </div>
+              </>
             )}
 
             {/* 에러 메시지 */}

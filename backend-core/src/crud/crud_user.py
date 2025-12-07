@@ -22,6 +22,14 @@ async def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
     return result.scalars().first()
 
 # --------------------------------------------------------------------------
+# 핸드폰 번호로 유저 조회
+# --------------------------------------------------------------------------
+async def get_user_by_phone(db: AsyncSession, phone: str) -> Optional[User]:
+    query = select(User).where(User.phone_number == phone)
+    result = await db.execute(query)
+    return result.scalars().first()
+
+# --------------------------------------------------------------------------
 # 유저 생성
 # --------------------------------------------------------------------------
 async def create_user(db: AsyncSession, user: UserCreate) -> User:
@@ -31,6 +39,15 @@ async def create_user(db: AsyncSession, user: UserCreate) -> User:
         email=user.email,
         hashed_password=hashed_password,
         full_name=user.full_name,
+        phone_number=user.phone_number,
+        birth_date=user.birth_date,
+        zip_code=user.zip_code,
+        address=user.address,
+        detail_address=user.detail_address,
+
+        # 전화번호가 있으면 인증된 것으로 간주 (API에서 체크했으므로)
+        is_phone_verified=True if user.phone_number else False,
+
         is_active=user.is_active,
         is_superuser=user.is_superuser,
         provider="local"

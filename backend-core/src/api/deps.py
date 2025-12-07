@@ -9,7 +9,7 @@ from src.core.security import settings
 from src.models.user import User
 from src.schemas.token import TokenPayload
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 async def get_db() -> Generator:
     async with AsyncSessionLocal() as session:
