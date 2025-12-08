@@ -1,5 +1,5 @@
 import React from 'react';
-import { Menu, ShoppingBag } from 'lucide-react';
+import { Menu, ShoppingBag, Camera } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 interface HeaderProps {
@@ -26,6 +26,10 @@ export default function Header({ onMenuClick }: HeaderProps) {
           <ShoppingBag size={24} />
           {/* 장바구니 뱃지 예시 */}
           <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-gray-900"></span>
+        </Link>
+        <Link to="/virtual-fitting" className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors relative">
+          <Camera size={24} />
+          {/* 가상 피팅 뱃지 예시 */}
         </Link>
       </div>
     </header>

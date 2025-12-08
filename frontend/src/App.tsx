@@ -12,6 +12,7 @@ import Login from '@/pages/Login';
 import ProductDetail from '@/pages/ProductDetail';
 import Profile from '@/pages/Profile';
 import Settings from '@/pages/Settings';
+import VirtualFitting from '@/pages/VirtualFitting';
 
 import Dashboard from '@/pages/admin/Dashboard';
 import ProductUpload from '@/pages/admin/ProductUpload';
@@ -46,6 +47,7 @@ export default function App() {
               <Route path="/" element={<Home />} />
               <Route path="/search" element={<Search />} />
               <Route path="/products/:id" element={<ProductDetail />} />
+              <Route path="/virtual-fitting" element={<VirtualFitting />} />
               
               {/* 🚨 수정: 관리자 라우트를 AdminRoute로 보호 */}
               <Route element={<AdminRoute />}> 

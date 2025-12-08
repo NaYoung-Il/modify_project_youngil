@@ -56,6 +56,7 @@ services:
     # [FIX] Inotify 한도 초과 에러 방지를 위한 폴링 모드 강제 설정
     environment:
       - WATCHFILES_FORCE_POLLING=true
+      - REPLICATE_API_TOKEN=${REPLICATE_API_TOKEN}
     volumes:
       - ./backend-core:/app 
       - ./.env.dev:/app/.env.dev
