@@ -1,12 +1,36 @@
 import os
 import base64
-from fastapi import APIRouter, UploadFile, File, HTTPException
+import io
+from PIL import Image
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 import replicate
 from pydantic import BaseModel
 
 router = APIRouter()
 
 # .env 파일이나 settings.py에 REPLICATE_API_TOKEN이 있어야 합니다.
+
+# 이미지 최적화 함수
+def optimize_image(image_bytes: bytes) -> str:
+
+    # 1. 바이트를 이미지 객체로 변환
+    img = Image.open(io.BytesIO(image_bytes))
+
+    # 2. RGB로 변환 (PNG 등 투명 배경 이미지 처리)
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+
+    # 3. 이미지 크기 조정 (최대 1024px)
+    img.thumbnail((1024, 1024))
+
+    # 4. JPEG로 압축 (퀄리티 85)
+    buffer = io.BytesIO()
+    img.save(buffer, format="JPEG", quality=85)
+
+    # 5. Base64 변환
+    encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return f"data:image/jpeg;base64,{encoded}"
+
 
 # 응답 스키마
 class FittingResponse(BaseModel):
@@ -16,7 +40,7 @@ class FittingResponse(BaseModel):
 async def generate_fitting(
     human_img: UploadFile = File(...),
     garm_img: UploadFile = File(...),
-    category: str = "upper_body" # upper_body, lower_body, dresses
+    category: str = Form("upper_body") # 프론트에서 보낸 값이 여기로 들어온다.
 ):
     """
     [가상 피팅 생성 API]
@@ -30,13 +54,13 @@ async def generate_fitting(
         human_bytes = await human_img.read()
         garm_bytes = await garm_img.read()
 
-        # 2. Base64 인코딩 (bytes -> string 변환) ✨ 핵심 수정 사항
-        # f"data:{MIME_TYPE};base64,{ENCODED_STRING}" 형식이어야 함
-        human_base64 = base64.b64encode(human_bytes).decode("utf-8")
-        human_uri = f"data:{human_img.content_type};base64,{human_base64}"
+        print("🚀 이미지 최적화 중...")
 
-        garm_base64 = base64.b64encode(garm_bytes).decode("utf-8")
-        garm_uri = f"data:{garm_img.content_type};base64,{garm_base64}"
+        # 2. [수정] 최적화 함수 사용 (용량 대폭 감소)
+        human_uri = optimize_image(human_bytes)
+        garm_uri = optimize_image(garm_bytes)
+
+        print(f"🚀 가상 피팅 생성 시작 (Category: {category})...")
 
         # 3. Replicate 모델 실행 (IDM-VTON)
         # 주의) Replicate는 파일을 URL로 받거나 파일 객체로 받아야 함.
@@ -51,8 +75,9 @@ async def generate_fitting(
             model_id, 
             input={
                 "human_img": human_uri,   
-                "garm_img": garm_uri,     
-                "garment_des": category,    # 옷 종류 (hello world text는 무시됨)
+                "garm_img": garm_uri,
+                "category": category,       # upper_body, lower_body, dresses
+                "garment_des": "clothing",  # 기본값 (옷에 대한 설명(텍스트))
                 "crop": False,
                 "seed": 42
             }
