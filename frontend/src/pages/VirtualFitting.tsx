@@ -1,5 +1,14 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import client from "@/api/client";
+import { ReactCompareSlider, ReactCompareSliderImage } from "react-compare-slider";
+
+// 히스토리 타입 정의
+interface HistoryItem {
+  id: number;
+  result_image_url: string;
+  category: string;
+  created_at: string;
+}
 
 export default function VirtualFitting() {
     const [humanFile, setHumanFile] = useState<File | null>(null);
@@ -7,6 +16,22 @@ export default function VirtualFitting() {
     const [resultImage, setResultImage] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [category, setCategory] = useState<string>("upper_body");
+    const [history, setHistory] = useState<HistoryItem[]>([]);
+
+    // 히스토리 불러오기
+    const fetchHistory = async () => {
+        try {
+            const res = await client.get("/fitting/history");
+            setHistory(res.data);
+        } catch (err) {
+            console.error("히스토리 불러오기 실패:", err);
+        }
+    };
+
+    // 페이지 접속 시 히스토리 로딩
+    useEffect(() => {
+        fetchHistory();
+    }, []);
 
     // 공통 붙여넣기 핸들러
     // setFile 함수를 인자로 받아서, 어느 칸에 붙여넣을지 결정
@@ -32,6 +57,7 @@ export default function VirtualFitting() {
         if (!humanFile || !garmentFile) return alert("이미지를 모두 올려주세요.");
 
         setIsLoading(true);
+        setResultImage(null);
         const formData = new FormData();
         formData.append("human_img", humanFile);
         formData.append("garm_img", garmentFile);
@@ -40,9 +66,11 @@ export default function VirtualFitting() {
         try {
             // API 호출
             const response = await client.post("fitting/generate", formData, {
-                headers: { "Content-Type": "multipart/form-data" }
+                headers: { "Content-Type": "multipart/form-data" },
+                timeout: 300000,    // 5분 타임아웃 설정 (Replicate의 Cold Start 대응)
             });
             setResultImage(response.data.image_url);
+            fetchHistory(); // 히스토리 갱신
         } catch (error) {
             console.error(error);
             alert("가상 피팅에 실패했습니다. 다시 시도해주세요.");
@@ -141,16 +169,45 @@ export default function VirtualFitting() {
                 <div className="border-2 border-purple-200 bg-purple-50 rounded-xl p-4 flex flex-col items-center justify-center min-h-[300px]">
                 {isLoading ? (
                     <div className="animate-pulse text-purple-600 font-bold">AI가 옷을 입혀보는 중...</div>
-                ) : resultImage ? (
-                    <div className="relative group">
-                        <img src={resultImage} className="h-64 object-contain rounded-lg shadow-lg" />
+                ) : resultImage && humanFile ? (
+                    <div className="w-full h-full flex flex-col items-center">
+                        <ReactCompareSlider
+                            itemOne={
+                            <ReactCompareSliderImage 
+                                src={URL.createObjectURL(humanFile)} 
+                                srcSet={URL.createObjectURL(humanFile)} 
+                                alt="Original" 
+                            />
+                            }
+                            itemTwo={
+                            <ReactCompareSliderImage 
+                                src={resultImage} 
+                                srcSet={resultImage} 
+                                alt="Result" 
+                            />
+                            }
+                            style={{ width: '100%', height: '100%', borderRadius: '0.5rem' }}
+                            // 슬라이더 바 색상 커스텀 (보라색)
+                            handle={
+                            <div className="w-1 h-full bg-purple-500 shadow-[0_0_10px_rgba(0,0,0,0.3)] relative">
+                                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-white rounded-full flex items-center justify-center shadow-md border-2 border-purple-500">
+                                <span className="text-purple-600 text-xs">↔</span>
+                                </div>
+                            </div>
+                            }
+                        />
+                        <p className="mt-2 text-xs text-gray-500 font-medium">
+                            👈 왼쪽: 원본 / 👉 오른쪽: 피팅 결과
+                        </p>
+                        
+                        {/* 확대보기 링크는 하단에 작게 유지 */}
                         <a 
                             href={resultImage} 
                             target="_blank" 
                             rel="noreferrer"
-                            className="absolute bottom-2 right-2 bg-white/80 p-2 rounded-full shadow-sm hover:bg-white text-xs font-bold text-gray-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="mt-2 text-xs text-purple-600 underline hover:text-purple-800"
                         >
-                            확대보기 🔍
+                            결과 이미지 원본 보기 🔍
                         </a>
                     </div>
                 ) : (
@@ -166,6 +223,68 @@ export default function VirtualFitting() {
             >
                 {isLoading ? '생성 중...' : '가상 피팅 시작하기 ✨'}
             </button>
+
+            {/* 구분선 */}
+            <hr className="my-12 border-gray-200" />
+
+            {/* ✨ [추가] 피팅 히스토리 갤러리 */}
+            <div className="mb-20">
+                <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+                📜 내가 입어본 옷 리스트
+                <span className="text-sm font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                    {history.length}개
+                </span>
+                </h2>
+
+                {history.length === 0 ? (
+                <div className="text-center py-10 bg-gray-50 rounded-xl text-gray-400">
+                    아직 피팅 기록이 없습니다. 첫 피팅을 시도해보세요!
+                </div>
+                ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        {history.map((item) => (
+                        <div key={item.id} className="group relative bg-white border rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all">
+                            {/* 이미지 */}
+                            <div className="aspect-[3/4] bg-gray-100 overflow-hidden">
+                            <img 
+                                src={item.result_image_url} 
+                                alt="Fitting Result" 
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            />
+                            </div>
+                            
+                            {/* 오버레이 (마우스 올리면 나옴) */}
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
+                            <a 
+                                href={item.result_image_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="bg-white text-gray-900 px-3 py-1.5 rounded-full text-xs font-bold hover:bg-gray-100"
+                            >
+                                크게 보기 🔍
+                            </a>
+                            <button 
+                                onClick={() => alert(`상품(ID:${item.id})을 장바구니에 담았습니다! (구현 예정)`)}
+                                className="bg-purple-600 text-white px-3 py-1.5 rounded-full text-xs font-bold hover:bg-purple-700"
+                            >
+                                장바구니 담기 🛒
+                            </button>
+                            </div>
+
+                            {/* 하단 정보 */}
+                            <div className="p-3">
+                            <span className="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded-md">
+                                {item.category === 'upper_body' ? '상의' : item.category === 'lower_body' ? '하의' : '드레스'}
+                            </span>
+                            <p className="text-[10px] text-gray-400 mt-1">
+                                {new Date(item.created_at).toLocaleDateString()}
+                            </p>
+                            </div>
+                        </div>
+                        ))}
+                    </div>
+                )}
+            </div>
         </div>
     )
 }

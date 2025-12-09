@@ -2,7 +2,7 @@
 from datetime import datetime, date
 from typing import Optional
 from sqlalchemy import String, Boolean, TIMESTAMP, Date
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 # [수정됨] Base 통일
 from src.db.session import Base
@@ -40,3 +40,5 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    fitting_results = relationship("FittingResult", back_populates="user", cascade="all, delete-orphan")
