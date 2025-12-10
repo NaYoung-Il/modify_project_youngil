@@ -22,4 +22,4 @@ authlib==1.3.0
 email-validator==2.1.0.post1
 fastapi-mail>=1.4.1
 aiofiles==23.1.0
-replicate==1.0.7    ## Replicate API client 추가
+gradio_client==2.0.1    ## Gradio Client 추가
