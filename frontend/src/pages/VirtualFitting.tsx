@@ -10,6 +10,17 @@ interface HistoryItem {
   created_at: string;
 }
 
+// 로딩 문구 리스트
+const LOADING_MESSAGES = [
+  "AI가 고객님의 체형을 분석하고 있어요 🧐",
+  "옷의 주름을 다림질하는 중... 👔",
+  "어떤 핏이 나올지 계산하고 있어요 📐",
+  "조명을 자연스럽게 맞추는 중이에요 ✨",
+  "옷감을 부드럽게 만들고 있어요 🧶",
+  "거의 다 됐어요! 핏을 확인해보세요 📸",
+  "마무리 픽셀을 다듬는 중... 🎨"
+];
+
 export default function VirtualFitting() {
     const [humanFile, setHumanFile] = useState<File | null>(null);
     const [garmentFile, setGarmentFile] = useState<File | null>(null);
@@ -17,6 +28,8 @@ export default function VirtualFitting() {
     const [isLoading, setIsLoading] = useState(false);
     const [category, setCategory] = useState<string>("upper_body");
     const [history, setHistory] = useState<HistoryItem[]>([]);
+    const [loadingMsgIndex, setLoadingMsgIndex] = useState(0);
+    const [progress, setProgress] = useState(0);
 
     // 히스토리 불러오기
     const fetchHistory = async () => {
@@ -32,6 +45,37 @@ export default function VirtualFitting() {
     useEffect(() => {
         fetchHistory();
     }, []);
+
+    // 로딩 애니메이션 타이머 (useEffect)
+    useEffect(() => {
+        let msgInterval: NodeJS.Timeout;
+        let progressInterval: NodeJS.Timeout;
+
+        if (isLoading) {
+            setLoadingMsgIndex(0);
+            setProgress(0);
+
+            // 1. 문구 변경 (3초마다)
+            msgInterval = setInterval(() => {
+                setLoadingMsgIndex((prev) => (prev + 1) % LOADING_MESSAGES.length);
+            }, 3000);
+
+            // 2. 가짜 진행률 바 (0% -> 95%까지 천천히 증가)
+            progressInterval = setInterval(() => {
+                setProgress((prev) => {
+                    if (prev >= 95) return 95; // 95%에서 멈춤 (완료되면 100% 없이 바로 결과로 넘어감)
+                    // 초반엔 빠르고 후반엔 느리게 (랜덤성 추가)
+                    const increment = prev < 50 ? Math.random() * 5 : Math.random() * 2;
+                    return Math.min(prev + increment, 95);
+                });
+            }, 500);
+        }
+
+    return () => {
+      clearInterval(msgInterval);
+      clearInterval(progressInterval);
+    };
+  }, [isLoading]);
 
     // 공통 붙여넣기 핸들러
     // setFile 함수를 인자로 받아서, 어느 칸에 붙여넣을지 결정
@@ -168,7 +212,37 @@ export default function VirtualFitting() {
                 {/* 3. 결과 화면 */}
                 <div className="border-2 border-purple-200 bg-purple-50 rounded-xl p-4 flex flex-col items-center justify-center min-h-[300px]">
                 {isLoading ? (
-                    <div className="animate-pulse text-purple-600 font-bold">AI가 옷을 입혀보는 중...</div>
+                    <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-white/50 backdrop-blur-sm absolute inset-0 z-10">
+              
+                        {/* 1. 귀여운 아이콘 애니메이션 */}
+                        <div className="mb-6 relative">
+                            <div className="w-16 h-16 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin"></div>
+                            <div className="absolute inset-0 flex items-center justify-center text-xl animate-pulse">
+                            👕
+                            </div>
+                        </div>
+
+                        {/* 2. 롤링 텍스트 (Fade 효과 느낌) */}
+                        <p className="text-lg font-bold text-gray-700 mb-2 min-h-[1.75rem] transition-all duration-500 text-center">
+                            {LOADING_MESSAGES[loadingMsgIndex]}
+                        </p>
+                        
+                        <p className="text-xs text-gray-400 mb-6">
+                            최대 1분 정도 소요될 수 있습니다. 잠시만 기다려주세요.
+                        </p>
+
+                        {/* 3. 프로그레스 바 */}
+                        <div className="w-full max-w-[200px] h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div 
+                            className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300 ease-out"
+                            style={{ width: `${progress}%` }}
+                            />
+                        </div>
+                        <p className="text-xs text-purple-600 font-bold mt-2">
+                            {Math.round(progress)}%
+                        </p>
+
+                    </div>
                 ) : resultImage && humanFile ? (
                     <div className="w-full h-full flex flex-col items-center">
                         <ReactCompareSlider
