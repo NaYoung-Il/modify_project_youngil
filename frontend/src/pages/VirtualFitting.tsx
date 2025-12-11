@@ -64,13 +64,13 @@ export default function VirtualFitting() {
                 setLoadingMsgIndex((prev) => (prev + 1) % LOADING_MESSAGES.length);
             }, 3000);
 
-            // 2. 가짜 진행률 바 (0% -> 95%까지 천천히 증가)
+            // 2. 가짜 진행률 바 (0% -> 98%까지 천천히 증가)
             progressInterval = setInterval(() => {
                 setProgress((prev) => {
-                    if (prev >= 95) return 95; // 95%에서 멈춤 (완료되면 100% 없이 바로 결과로 넘어감)
+                    if (prev >= 98) return 98; // 98%에서 멈춤 (완료되면 100% 없이 바로 결과로 넘어감)
                     // 초반엔 빠르고 후반엔 느리게 (랜덤성 추가)
-                    const increment = prev < 50 ? Math.random() * 5 : Math.random() * 2;
-                    return Math.min(prev + increment, 95);
+                    const increment = prev < 60 ? Math.random() * 6 : Math.random() * 3;
+                    return Math.min(prev + increment, 98);
                 });
             }, 500);
         }
@@ -248,7 +248,7 @@ export default function VirtualFitting() {
 
                     </div>
                 ) : resultImage && humanFile ? (
-                    <div className="w-full h-full flex flex-col items-center">
+                    <div className="w-full h-full flex flex-col items-center relative group">
                         <ReactCompareSlider
                             itemOne={
                             <ReactCompareSliderImage 
@@ -281,7 +281,7 @@ export default function VirtualFitting() {
                         {/* 확대보기 링크는 하단에 작게 유지 */}
                         <button 
                             onClick={() => resultImage && setSelectedImage(resultImage)}
-                            className="absolute bottom-2 right-2 bg-white/80 p-2 rounded-full shadow-sm hover:bg-white text-xs font-bold text-gray-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="absolute bottom-8 right-4 bg-white/90 p-2 rounded-full shadow-sm hover:bg-white text-xs font-bold text-gray-700 opacity-0 group-hover:opacity-100 transition-all duration-300 z-10"
                         >
                             확대보기 🔍
                         </button>
@@ -384,7 +384,7 @@ export default function VirtualFitting() {
                     </div>
                 </div>
             )}
-            
+
         </div>
     )
 }

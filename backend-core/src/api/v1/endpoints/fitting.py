@@ -44,8 +44,35 @@ def optimize_image(image_bytes: bytes) -> str:
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
 
-    # 3. 이미지 크기 조정 (최대 1024px)
-    img.thumbnail((1024, 1024))
+    # 3. 3:4 비율(768x1024)로 캔버스 만들기 (Padding)
+    target_ratio = 3 / 4
+    target_width = 768
+    target_height = 1024
+    
+    current_width, current_height = img.size
+    current_ratio = current_width / current_height
+
+    # 이미지가 들어갈 최종 크기 계산
+    if current_ratio > target_ratio:
+        # 이미지가 더 넓적한 경우 (가로 기준 맞춤)
+        new_width = target_width
+        new_height = int(target_width / current_ratio)
+    else:
+        # 이미지가 더 길쭉하거나 같은 경우 (세로 기준 맞춤)
+        new_height = target_height
+        new_width = int(target_height * current_ratio)
+        
+    # 리사이징 (LANCZOS 필터로 고화질 유지)
+    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    
+    # 3:4 비율의 흰색(또는 검은색) 배경 생성
+    # AI 모델은 배경이 단순할수록 인식을 잘 하므로 흰색 추천
+    new_img = Image.new("RGB", (target_width, target_height), (255, 255, 255))
+    
+    # 중앙에 이미지 붙여넣기
+    paste_x = (target_width - new_width) // 2
+    paste_y = (target_height - new_height) // 2
+    new_img.paste(img, (paste_x, paste_y))
 
     # 4. JPEG로 압축 (퀄리티 85)
     buffer = io.BytesIO()
