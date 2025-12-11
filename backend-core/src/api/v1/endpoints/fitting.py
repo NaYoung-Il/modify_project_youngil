@@ -2,22 +2,28 @@ import os
 import shutil
 import tempfile
 import base64
+import logging
+import io
 from pathlib import Path
 from datetime import datetime
 from typing import List
-from PIL import Image, ImageDraw
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session 
 from gradio_client import Client, handle_file
+from PIL import Image, ImageDraw
 
 from src.db.session import get_db
 from src.models.user import User
 from src.models.fitting import FittingResult
 from src.api import deps    # 로그인 유저 확인용
 from pydantic import BaseModel
+
+# 불필요한 로그 숨기기
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("gradio_client").setLevel(logging.WARNING)
 
 router = APIRouter()
 
@@ -35,52 +41,77 @@ class FittingHistoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# Helper : 이미지를 Base64 Data URI로 변환
+# Helper : 결과 이미지 처리 -> 이미지를 Base64 Data URI로 변환
 def image_to_base64(image_path: str) -> str:
     # 파일이 실제로 존재하는지 확인
     if not os.path.exists(image_path):
         raise FileNotFoundError(f"Result file not found: {image_path}")
     
-    with open(image_path, "rb") as img_file:
-        encoded_string = base64.b64encode(img_file.read()).decode("utf-8")
-        # JPEG 형식으로 가정
-        return f"data:image/jpeg;base64,{encoded_string}"
+    # 1. 이미지 열기
+    img = Image.open(image_path)
     
-# Helper : 강제 마스크 생성
+    # 2. 조건문 없이 무조건 RGB(불투명)로 변환
+    img = img.convert("RGB")
+        
+    # 3. JPEG로 변환 (용량 최적화)
+    buffer = io.BytesIO()
+    img.save(buffer, format="JPEG", quality=95)
+    
+    encoded_string = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return f"data:image/jpeg;base64,{encoded_string}"
+
+# Helper : 입력 파일 정화(Sanitizing) + 리사이징 (OOM 방지)
+def save_as_clean_png(upload_file: UploadFile, save_path: str):
+    # 파일을 PIL 이미지로 열기
+    img = Image.open(upload_file.file)
+    
+    # PNG는 RGBA를 지원하므로 굳이 변환 안 해도 되지만, 
+    # 혹시 모를 호환성을 위해 RGB로 변환해도 좋습니다.
+    if img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGB")
+
+    # 이미지 리사이징
+    # 해상도가 너무 크면 GPU 메모리(VRAM)가 터지므로 적절히 줄여야 함.
+    # 긴 변을 기준으로 768px로 맞춤 (비율 유지)
+    max_size = 768
+    if max(img.size) > max_size:
+        # LANCZOS 필터를 써서 화질 저하를 최소화하며 줄임
+        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+        print(f"📉 이미지 리사이징 적용됨: {img.size}")
+        
+    # JPEG로 강제 저장
+    img.save(save_path, format="PNG")
+
+# Helper : 강제 마스크 생성 함수 (하의/드레스용) 
 def create_mask_image(image_path: str, category: str) -> str:
-    """
-    카테고리에 따라 이미지의 특정 영역을 검은색으로 칠한 마스크를 생성합니다.
-    - upper: 마스크 없음 (자동 맡김)
-    - lower: 하단 50% 마스킹
-    - dresses: 머리 제외 전체 마스킹 (상단 15% 남김)
-    """
-    img = Image.open(image_path).convert("RGB")
-    width, height = img.size
-
-    # 마스크 레이어 생성 (투명 배경)
-    mask = Image.new("RGBA", (width, height), (0,0,0,0))
-    draw = ImageDraw.Draw(mask)
-
-    # 영역 지정 (하얀색 = 바뀔 부분, 투명 = 유지할 부분)
-    # 주의: Gradio Editor에서는 보통 '지워진 부분'을 채우거나, '칠해진 부분'을 채움.
-    # IDM-VTON은 보통 "검은색 배경에 흰색 영역"이 마스크입니다.
-    if category == "lower_body":
-        # 하의: 이미지의 하단 60%를 바꿈
-        draw.rectangle([(0, int(height * 0.4)), (width, height)], fill=(255, 255, 255, 255))
+    try:
+        img = Image.open(image_path).convert("RGB")
+        width, height = img.size
         
-    elif category == "dresses":
-        # 드레스: 얼굴(상단 10~15%)을 제외하고 전체를 바꿈
-        draw.rectangle([(0, int(height * 0.15)), (width, height)], fill=(255, 255, 255, 255))
+        # 투명 배경 마스크 생성
+        mask = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(mask)
         
-    else:
-        # 상의는 자동 마스킹이 잘 되므로 빈 마스크 반환 (사용 안 함)
+        # Gradio ImageEditor는 보통 '칠한 부분'을 마스크로 인식함
+        # 흰색(255)으로 칠해서 "여기를 바꿔라"고 표시
+        if category == "lower_body":
+            # 하의: 아래쪽 55%
+            draw.rectangle([(0, int(height * 0.45)), (width, height)], fill=(255, 255, 255, 255))
+        elif category == "dresses":
+            # 드레스: 얼굴(상위 15%) 빼고 전체
+            draw.rectangle([(0, int(height * 0.15)), (width, height)], fill=(255, 255, 255, 255))
+        else:
+            # 상의: '자동 마스킹'을 쓰고 싶지만, 빈 리스트를 보내면 서버가 죽음.
+            # 해결책: "가슴~배" 부분을 대충 칠해서 보냅니다. (어차피 CatVTON이 보정함)
+            # 상단 20% ~ 55% 영역 지정
+            draw.rectangle([(0, int(height * 0.20)), (width, int(height * 0.55))], fill=(255, 255, 255, 255))
+
+        mask_path = image_path.replace(".png", "_mask.png")
+        mask.save(mask_path)
+        return mask_path
+    except Exception as e:
+        print(f"⚠️ 마스크 생성 실패: {e}")
         return None
-    
-    # 마스크 파일 저장
-    mask_path = image_path.replace(".jpg", "_mask.png")
-    mask.save(mask_path)
-    return mask_path
 
 
 # 1. 가상 피팅 생성 및 저장 엔드포인트
@@ -98,88 +129,90 @@ async def generate_fitting(
     temp_mask_path = None
 
     try:
-        print(f"🚀 IDM-VTON 피팅 시작 (User: {current_user.email}, Category: {category})")
+        print(f"🚀 CatVTON(Colab) 피팅 시작 (User: {current_user.email}, Category: {category})")
 
-        # 1. 임시 파일 생성 (Gradio Client는 파일 경로가 필요함)
+        # 1. Colab 주소 확인 (.env에서 관리 추천)
+        colab_url = os.getenv("COLAB_API_URL")
+        if not colab_url:
+             raise HTTPException(status_code=500, detail="Colab 주소(COLAB_API_URL)가 설정되지 않았습니다.")
+
+        # 2. 임시 파일 생성 (Gradio Client는 파일 경로가 필요함)
         # NamedTemporaryFile을 사용하여 업로드된 바이너리를 디스크에 잠시 저장
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_human:
-            shutil.copyfileobj(human_img.file, tmp_human)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_human:
             temp_human_path = tmp_human.name
             
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_garm:
-            shutil.copyfileobj(garm_img.file, tmp_garm)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_garm:
             temp_garm_path = tmp_garm.name
-        
-        # 2. 카테고리 텍스트 변환
-        # yisol/IDM-VTON은 'garment_des'라는 텍스트 설명을 받습니다.
-        # 우리가 선택한 카테고리를 그럴싸한 영어 텍스트로 바꿔줍니다.
-        description_map = {
-            "upper_body": "upper body garment, short sleeve top, t-shirt",          # 상의
-            "lower_body": "lower body garment, trousers, pants, jeans, legs",       # 하의
-            "dresses": "full body garment, long dress, one piece dress, gown"       # 드레스
-        }
-        garment_desc = description_map.get(category, "clothes") # 기본값
 
-        # 2. Hugging Face Space 연결
-        print("🚀 Hugging Face API 연결 중 (yisol/IDM-VTON)...")
+        # 입력 이미지를 깨끗한 PNG로 변환하여 저장
+        # 기존 shutil.copyfileobj 대신 사용
+        save_as_clean_png(human_img, temp_human_path)
+        save_as_clean_png(garm_img, temp_garm_path)
 
-        # 환경 변수에서 액세스 토큰을 가져와서 Client에 전달
-        hf_token = os.getenv("HUGGINGFACE_API_TOKEN")
-
-        # hf_token을 넣으면 'Logged user'로 인식되어 할당량이 늘어납니다.
-        client = Client("yisol/IDM-VTON", headers={"Authorization": f"Bearer {hf_token}"}) 
-
-        # 3. 예측 요청 (API 호출)
-        # yisol/IDM-VTON의 입력 스펙:
-        # param 0: dict {"background": file, "layers": [], "composite": null}
-        # param 1: garment image file
-        # param 2: garment description (text)
-        # param 3: is_checked (auto-masking true)
-        # ...
-        print("🚀 AI 모델 실행 중 (Queue 대기 가능)...")
-
-        # 상의가 아니면 강제 마스크 생성 
+        # 3. 마스크 생성 (하의/드레스인 경우)
         generated_mask_path = None
-        use_auto_mask = True
-
         if category in ["lower_body", "dresses"]:
             generated_mask_path = create_mask_image(temp_human_path, category)
             if generated_mask_path:
-                use_auto_mask = False # 자동 마스킹 끄기
                 temp_mask_path = generated_mask_path
                 print(f"👉 강제 마스킹 적용됨: {category}")
-        
-        # Gradio 입력 데이터 구성
-        # mask가 있으면 layers에 넣어서 보낸다.
-        dict_input = {
-            "background": handle_file(temp_human_path),
-            "layers": [handle_file(generated_mask_path)] if generated_mask_path else [],
-            "composite": None
-        }
 
+        # 4. Colab 서버 연결
+        print(f"🚀 AI 서버 연결 중: {colab_url}")
+        client = Client(colab_url)
+
+        # 5. 예측 요청 (CatVTON API)
+        # CatVTON의 공식 데모 앱은 보통 아래와 같은 순서로 파라미터를 받습니다.
+        # 정확한 API 형태 확인을 위해 client.view_api()를 사용할 수 있습니다.
+        # 일반적인 순서: [사람이미지, 옷이미지, 마스크(선택), 시드, ...]
+        
+        # 카테고리 매핑 (CatVTON은 보통 옷 종류를 자동 인식하거나 단순화함)
+        # 만약 마스크를 직접 보내야 한다면 create_mask_image 함수 활용 가능
+        print("🚀 AI 모델 실행 중...")
+
+        # 카테고리 매핑 (CatVTON API 요구사항: 'upper', 'lower', 'overall')
+        cat_map = {
+            "upper_body": "upper", 
+            "lower_body": "lower", 
+            "dresses": "overall"
+        }
+        target_cloth_type = cat_map.get(category, "upper")
+
+        # Gradio ImageEditor 입력 구조 생성
+        if generated_mask_path:
+            # 하의/드레스: 강제 마스크가 있으므로 '딕셔너리' 형태로 보냄
+            person_input = {
+                "background": handle_file(temp_human_path),
+                "layers": [handle_file(generated_mask_path)],
+                "composite": None
+            }
+        else:
+            # 상의(upper): 마스크가 없으므로 '파일 핸들'만 보냄
+            # -> 서버가 빈 리스트 에러를 내지 않고 '자동 마스킹'을 수행함
+            person_input = handle_file(temp_human_path)
+
+        # API 호출 (CatVTON 데모의 일반적인 파라미터 구조)
         result = client.predict(
-            dict=dict_input,
-            garm_img=handle_file(temp_garm_path),
-            garment_des=garment_desc,
-            is_checked=use_auto_mask,   # 상의는 True(자동), 하의/드레스는 False(수동)
-            is_checked_crop=False,      # 크롭 안 함
-            denoise_steps=30,           # 스텝 수 (30이 표준)
-            seed=42,                    # 시드 고정
-            api_name="/tryon"
+            person_input,                      # 1. person_image
+            handle_file(temp_garm_path),       # 2. condition_image 
+            target_cloth_type,                 # 3. tryon_cloth_type 
+            50,                                # 4. inferenct_step
+            2.5,                               # 5. cfg_strength
+            42,                                # 6. seed
+            "result only",                     # 7. show_type
+            api_name="/submit_function"        # 8. api_name 
         )
 
-        # result는 보통 (image_path, seed) 형태의 튜플로 반환됩니다.
-        # 첫 번째 요소가 결과 이미지 경로입니다.
-        result_path = result[0]
-
+        # 결과값 처리
+        result_path = result
         print(f"✅ 생성 완료. 파일 위치: {result_path}")
 
-        # 4. 결과 파일을 Base64로 변환 (DB 저장 및 반환용)
+        # 5. 결과 파일을 Base64로 변환 (DB 저장 및 반환용)
         # 주의: Base64 문자열이 길어질 수 있으므로, 실제 서비스에선 S3 업로드를 추천
         # 여기서는 빠른 구현을 위해 Data URI로 변환합니다.
         result_url = image_to_base64(result_path)
 
-        # 5. DB 저장
+        # 6. DB 저장
         history = FittingResult(
             user_id=current_user.id,
             result_image_url=result_url, # Base64 문자열이 들어감 (DB 컬럼 크기 주의)
@@ -194,6 +227,13 @@ async def generate_fitting(
 
     except Exception as e:
         print(f"❌ CatVTON Error: {e}")
+        # 디버깅용: 실패 시 다시 API 정보를 찍어서 확인
+        try:
+            if 'client' in locals():
+                print("--- API 정보 ---")
+                client.view_api()
+        except:
+            pass
         raise HTTPException(status_code=500, detail=f"가상 피팅 실패: {str(e)}")
         
     finally:
@@ -203,7 +243,7 @@ async def generate_fitting(
         if temp_garm_path and os.path.exists(temp_garm_path):
             os.remove(temp_garm_path)
         if temp_mask_path and os.path.exists(temp_mask_path): 
-            os.remove(temp_mask_path) 
+            os.remove(temp_mask_path)
 
 
 # 2. 가상 피팅 히스토리 목록 조회 엔드포인트
