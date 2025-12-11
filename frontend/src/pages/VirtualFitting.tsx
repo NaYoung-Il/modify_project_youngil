@@ -25,11 +25,15 @@ export default function VirtualFitting() {
     const [humanFile, setHumanFile] = useState<File | null>(null);
     const [garmentFile, setGarmentFile] = useState<File | null>(null);
     const [resultImage, setResultImage] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(false);
+    
     const [category, setCategory] = useState<string>("upper_body");
     const [history, setHistory] = useState<HistoryItem[]>([]);
+    const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
+    const [isLoading, setIsLoading] = useState(false);
     const [loadingMsgIndex, setLoadingMsgIndex] = useState(0);
     const [progress, setProgress] = useState(0);
+    
 
     // 히스토리 불러오기
     const fetchHistory = async () => {
@@ -275,14 +279,12 @@ export default function VirtualFitting() {
                         </p>
                         
                         {/* 확대보기 링크는 하단에 작게 유지 */}
-                        <a 
-                            href={resultImage} 
-                            target="_blank" 
-                            rel="noreferrer"
-                            className="mt-2 text-xs text-purple-600 underline hover:text-purple-800"
+                        <button 
+                            onClick={() => resultImage && setSelectedImage(resultImage)}
+                            className="absolute bottom-2 right-2 bg-white/80 p-2 rounded-full shadow-sm hover:bg-white text-xs font-bold text-gray-700 opacity-0 group-hover:opacity-100 transition-opacity"
                         >
-                            결과 이미지 원본 보기 🔍
-                        </a>
+                            확대보기 🔍
+                        </button>
                     </div>
                 ) : (
                     <div className="text-gray-400">결과가 여기에 표시됩니다</div>
@@ -329,14 +331,12 @@ export default function VirtualFitting() {
                             
                             {/* 오버레이 (마우스 올리면 나옴) */}
                             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
-                            <a 
-                                href={item.result_image_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="bg-white text-gray-900 px-3 py-1.5 rounded-full text-xs font-bold hover:bg-gray-100"
+                            <button 
+                                onClick={() => setSelectedImage(item.result_image_url)}
+                                className="bg-white text-gray-900 px-3 py-1.5 rounded-full text-xs font-bold hover:bg-gray-100 cursor-pointer"
                             >
                                 크게 보기 🔍
-                            </a>
+                            </button>
                             <button 
                                 onClick={() => alert(`상품(ID:${item.id})을 장바구니에 담았습니다! (구현 예정)`)}
                                 className="bg-purple-600 text-white px-3 py-1.5 rounded-full text-xs font-bold hover:bg-purple-700"
@@ -359,6 +359,32 @@ export default function VirtualFitting() {
                     </div>
                 )}
             </div>
+
+            {/* 이미지 확대 보기 모달 */}
+            {selectedImage && (
+                <div 
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 cursor-pointer"
+                    onClick={() => setSelectedImage(null)} // 배경 클릭 시 닫기
+                >
+                    <div className="relative max-w-4xl max-h-[90vh] w-full flex justify-center">
+                        <img 
+                            src={selectedImage} 
+                            alt="Enlarged Result" 
+                            className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+                            onClick={(e) => e.stopPropagation()} // 이미지 클릭 시 닫기 방지
+                        />
+                        
+                        {/* 닫기 버튼 */}
+                        <button 
+                            onClick={() => setSelectedImage(null)}
+                            className="absolute -top-12 right-0 text-white hover:text-gray-300 transition-colors"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                        </button>
+                    </div>
+                </div>
+            )}
+            
         </div>
     )
 }
